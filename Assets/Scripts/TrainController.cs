@@ -1,6 +1,8 @@
 using UnityEngine;
-using UnityEngine.UI;
+using UnityEngine.UI; // Für Slider
+using TMPro;          // WICHTIG: Für TextMeshPro
 
+[RequireComponent(typeof(AudioSource))]
 public class TrainController : MonoBehaviour
 {
     [Header("Settings")]
@@ -10,29 +12,50 @@ public class TrainController : MonoBehaviour
     public float stopX = 0f;
     public float despawnX = -80f;
 
+    // NEU: Festgelegte Anzahl (Standard 10)
+    public int giftsNeededPerRound = 10;
+
+    [Header("Audio")]
+    public AudioClip arrivalSound;
+
     [Header("Visuals")]
     public GameObject emptyWagonVisual;
     public GameObject fullWagonVisual;
-    public Slider timerSlider;
-    public Text counterText;
+
+    [Header("UI (World Space)")]
+    public Slider timerSlider;   // Der existierende Timer-Slider (wenn du ihn behalten willst)
+
+    // NEU: Slider und Text für die Pakete
+    public Slider cargoSlider;
+    public TMP_Text cargoText;       // "0 / 10"
 
     private bool isWaiting = false;
     private bool isLeaving = false;
     private float currentWaitTimer;
     private int currentGifts = 0;
-    private int requiredGifts = 10;
-
-    // Wir merken uns beim Abfahren, ob wir voll waren, für die Auswertung später
+    private int requiredGifts;
     private bool wasFullWhenDeparted = false;
+    private AudioSource audioSource;
 
     void Start()
     {
-        ResetTrain(true); // true = Initialer Reset
+        audioSource = GetComponent<AudioSource>();
+        audioSource.playOnAwake = false;
+        audioSource.loop = false;
+        ResetTrain(true);
     }
 
     void Update()
     {
-        if (GameManager.Instance != null && !GameManager.Instance.IsGameRunning()) return;
+        if (GameManager.Instance != null && !GameManager.Instance.IsGameRunning())
+        {
+            if (audioSource.isPlaying) audioSource.Pause();
+            return;
+        }
+        else
+        {
+            audioSource.UnPause();
+        }
 
         // 1. Einfahren
         if (!isWaiting && !isLeaving)
@@ -40,17 +63,26 @@ public class TrainController : MonoBehaviour
             Vector3 targetPos = new Vector3(stopX, transform.position.y, transform.position.z);
             transform.position = Vector3.MoveTowards(transform.position, targetPos, speed * Time.deltaTime);
 
-            if (Mathf.Abs(transform.position.x - stopX) < 0.1f) StartWaiting();
+            if (Mathf.Abs(transform.position.x - stopX) < 0.1f)
+            {
+                StartWaiting();
+            }
         }
         // 2. Warten
         else if (isWaiting)
         {
+            // Visual Update wenn voll
             if (currentGifts >= requiredGifts && !fullWagonVisual.activeSelf) SetWagonVisuals(true);
 
             currentWaitTimer -= Time.deltaTime;
+
+            // Timer Slider Logik (optional, falls du den noch nutzt)
             if (timerSlider) timerSlider.value = currentWaitTimer / waitTime;
 
-            if (currentWaitTimer <= 0 || (currentGifts >= requiredGifts && currentWaitTimer < (waitTime - 2f)))
+            // Abfahrtbedingungen: Zeit um ODER (Voll UND kurze Wartezeit vorbei)
+            // Wir lassen ihn sofort abfahren, wenn er voll ist? Oder soll er warten? 
+            // Dein Code war: Er fährt ab, wenn Zeit um.
+            if (currentWaitTimer <= 0)
             {
                 Depart();
             }
@@ -60,19 +92,12 @@ public class TrainController : MonoBehaviour
         {
             transform.Translate(Vector3.left * speed * Time.deltaTime);
 
-            // Wenn der Zug ganz links angekommen ist (-80)
             if (transform.position.x < despawnX)
             {
-                // HIER: Schneemann spawnen!
-                if (SnowmanSpawner.Instance != null)
-                {
-                    SnowmanSpawner.Instance.SpawnSnowman();
-                }
+                if (SnowmanSpawner.Instance != null) SnowmanSpawner.Instance.SpawnSnowman();
 
-                // HIER: Auswertung an GameManager senden (Score oder Leben abziehen)
-                // Wir machen das erst, wenn der Zug weg ist, damit es fair wirkt
+                // Hier checken wir, ob er voll war für Punkte/Leben
                 GameManager.Instance.OnTrainDeparted(wasFullWhenDeparted);
-
                 ResetTrain(false);
             }
         }
@@ -82,8 +107,11 @@ public class TrainController : MonoBehaviour
     {
         isWaiting = true;
         currentWaitTimer = waitTime;
+
         currentGifts = 0;
-        requiredGifts = Random.Range(3, 8);
+        // HIER: Feste Anzahl nehmen statt Random
+        requiredGifts = giftsNeededPerRound;
+
         UpdateUI();
     }
 
@@ -91,7 +119,6 @@ public class TrainController : MonoBehaviour
     {
         isWaiting = false;
         isLeaving = true;
-        // Speichern ob wir erfolgreich waren
         wasFullWhenDeparted = (currentGifts >= requiredGifts);
     }
 
@@ -102,7 +129,12 @@ public class TrainController : MonoBehaviour
         isWaiting = false;
         SetWagonVisuals(false);
 
-        // Wenn das Spiel komplett neu startet (Initial), müssen wir Schneemänner resetten
+        if (arrivalSound != null)
+        {
+            audioSource.clip = arrivalSound;
+            audioSource.Play();
+        }
+
         if (initial && SnowmanSpawner.Instance != null)
         {
             SnowmanSpawner.Instance.ResetSnowmen();
@@ -117,22 +149,55 @@ public class TrainController : MonoBehaviour
 
     void UpdateUI()
     {
-        if (counterText) counterText.text = $"{currentGifts} / {requiredGifts}";
+        // 1. Text aktualisieren
+        // Zeigt z.B. "0 / 10" oder "10 / 10" an
+        if (cargoText != null)
+        {
+            cargoText.text = $"{currentGifts} / {requiredGifts}";
+        }
+
+        // 2. Slider aktualisieren (Berechnung für 0 bis 1 Range)
+        if (cargoSlider != null)
+        {
+            // Sicherstellen, dass wir nicht durch 0 teilen
+            if (requiredGifts > 0)
+            {
+                // WICHTIG: (float) benutzen, sonst kommt bei Ganzzahlen (5/10) immer 0 raus!
+                float percentage = (float)currentGifts / (float)requiredGifts;
+                cargoSlider.value = percentage;
+            }
+            else
+            {
+                cargoSlider.value = 1f; // Falls 0 benötigt werden, ist er voll
+            }
+        }
     }
 
     void OnTriggerEnter(Collider other)
     {
+        // Nur wenn wir warten und der Spieler kommt
         if (isWaiting && other.CompareTag("Player"))
         {
             PlayerController player = other.GetComponent<PlayerController>();
             if (player != null)
             {
-                int gifts = player.ClearStack();
-                if (gifts > 0)
+                // WICHTIG: Berechnen, wie viele noch fehlen
+                int missing = requiredGifts - currentGifts;
+
+                if (missing > 0)
                 {
-                    currentGifts += gifts;
+                    // Wir nehmen nur so viele vom Spieler, wie fehlen!
+                    int taken = player.GiveGifts(missing);
+
+                    currentGifts += taken;
                     UpdateUI();
-                    if (currentGifts >= requiredGifts) SetWagonVisuals(true);
+
+                    if (currentGifts >= requiredGifts)
+                    {
+                        SetWagonVisuals(true);
+                        // Optional: Wenn voll, sofort Abfahrt-Timer verkürzen?
+                        // currentWaitTimer = 1.0f; // z.B. nur noch 1 Sekunde warten
+                    }
                 }
             }
         }

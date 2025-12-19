@@ -1,78 +1,65 @@
 using UnityEngine;
 using UnityEngine.SceneManagement;
-using UnityEngine.InputSystem; // WICHTIG: Neues Input System
-using UnityEngine.UI;          // WICHTIG: Für UI Text
+using UnityEngine.InputSystem;
+using TMPro;
 
 public class GameManager : MonoBehaviour
 {
     public static GameManager Instance;
 
-    [Header("UI Panels (Drag & Drop)")]
+    [Header("UI Panels")]
     public GameObject splashPanel;
     public GameObject menuPanel;
     public GameObject gamePanel;
     public GameObject resultsPanel;
 
-    [Header("Game UI Elements")]
-    public Text scoreText;       // Oben im Spiel: "Score: 0"
-    public Text livesText;       // Oben im Spiel: "Lives: 3"
-    public Text finalScoreText;  // Im Game Over Screen: "Final Score: 100"
+    [Header("Game UI Elements (TMP)")]
+    public TMP_Text scoreText;
+    public TMP_Text highscoreText;
+    public TMP_Text roundText;
+    public TMP_Text livesText;
+    public TMP_Text finalScoreText;  // WICHTIG für Game Over
 
     [Header("Settings")]
     public int maxLives = 3;
     public float splashDuration = 3.0f;
 
-    // Zustände des Spiels
     public enum GameState { Splash, Menu, Game, Results }
     public GameState CurrentState { get; private set; }
 
-    // Interne Variablen
     private int score;
+    private int highscore;
+    private int round;
     private int currentLives;
     private float timer;
 
     void Awake()
     {
-        // Singleton Pattern
-        if (Instance == null)
-        {
-            Instance = this;
-        }
-        else
-        {
-            Destroy(gameObject);
-        }
+        if (Instance == null) Instance = this;
+        else Destroy(gameObject);
     }
 
     void Start()
     {
-        // Startet immer mit dem Splash Screen
+        highscore = PlayerPrefs.GetInt("Highscore", 0);
+        UpdateGameUI();
         ChangeState(GameState.Splash);
     }
 
     void Update()
     {
-        // Splash Screen Logik (Zeit oder Klick)
         if (CurrentState == GameState.Splash)
         {
             timer += Time.deltaTime;
-
-            // Neues Input System: Maus-Klick prüfen
             bool mouseClicked = Mouse.current != null && Mouse.current.leftButton.wasPressedThisFrame;
-
-            if (timer >= splashDuration || mouseClicked)
-            {
-                ChangeState(GameState.Menu);
-            }
+            if (timer >= splashDuration || mouseClicked) ChangeState(GameState.Menu);
         }
     }
 
-    // --- State Machine ---
     public void ChangeState(GameState newState)
     {
         CurrentState = newState;
 
-        // Alle Panels erst mal ausblenden
         if (splashPanel) splashPanel.SetActive(false);
         if (menuPanel) menuPanel.SetActive(false);
         if (gamePanel) gamePanel.SetActive(false);
@@ -84,63 +71,63 @@ public class GameManager : MonoBehaviour
                 if (splashPanel) splashPanel.SetActive(true);
                 timer = 0f;
                 break;
-
             case GameState.Menu:
                 if (menuPanel) menuPanel.SetActive(true);
-
-                // HIER: Musik starten, sobald das Menü erscheint!
-                if (BackgroundMusicManager.Instance != null)
-                {
-                    BackgroundMusicManager.Instance.StartMusic();
-                }
+                if (BackgroundMusicManager.Instance != null) BackgroundMusicManager.Instance.StartMusic();
                 break;
-
             case GameState.Game:
                 if (gamePanel) gamePanel.SetActive(true);
-                UpdateGameUI(); // UI sofort aktualisieren
+                UpdateGameUI();
                 break;
-
             case GameState.Results:
                 if (resultsPanel) resultsPanel.SetActive(true);
-                // Finalen Score anzeigen
+                // HIER: Den finalen Score in den Text schreiben
                 if (finalScoreText) finalScoreText.text = $"Final Score: {score}";
                 break;
         }
     }
 
-    // --- Spiel Logik ---
-
     public void StartGame()
     {
         score = 0;
         currentLives = maxLives;
-
+        round = 1;
         UpdateGameUI();
         ChangeState(GameState.Game);
     }
 
-    // Wird vom TrainController aufgerufen, wenn der Zug links verschwindet
+    // Wird vom TrainController aufgerufen
     public void OnTrainDeparted(bool wasFull)
     {
         if (CurrentState != GameState.Game) return;
 
         if (wasFull)
         {
-            // Belohnung
+            // Zug voll -> Punkte, KEIN Leben verloren
             score += 100;
+            if (score > highscore)
+            {
+                highscore = score;
+                PlayerPrefs.SetInt("Highscore", highscore);
+                PlayerPrefs.Save();
+            }
             Debug.Log("Zug voll! +100 Punkte");
         }
         else
         {
-            // Strafe
+            // Zug nicht voll -> Leben verlieren
             currentLives--;
             Debug.Log("Zug nicht voll! Leben verloren.");
 
             if (currentLives <= 0)
             {
                 TriggerGameOver();
+                return; // Wichtig: Hier abbrechen, damit Runde nicht hochzählt
             }
         }
+
+        // Wenn noch Leben da sind, nächste Runde
+        round++;
         UpdateGameUI();
     }
 
@@ -148,6 +135,8 @@ public class GameManager : MonoBehaviour
     {
         if (scoreText) scoreText.text = $"Score: {score}";
         if (livesText) livesText.text = $"Lives: {currentLives}";
+        if (highscoreText) highscoreText.text = $"Highscore: {highscore}";
+        if (roundText) roundText.text = $"Round: {round}";
     }
 
     public void TriggerGameOver()
@@ -155,28 +144,9 @@ public class GameManager : MonoBehaviour
         ChangeState(GameState.Results);
     }
 
-    public bool IsGameRunning()
-    {
-        return CurrentState == GameState.Game;
-    }
+    public bool IsGameRunning() => CurrentState == GameState.Game;
 
-    // --- Button Funktionen (Im Inspector verknüpfen) ---
-
-    public void OnStartGameButton()
-    {
-        StartGame();
-    }
-
-    public void OnRestartButton()
-    {
-        // Lädt die komplette Szene neu
-        // Der MusicManager bleibt dabei erhalten (da DontDestroyOnLoad)
-        SceneManager.LoadScene(SceneManager.GetActiveScene().name);
-    }
-
-    public void OnQuitButton()
-    {
-        Application.Quit();
-        Debug.Log("Spiel beendet!");
-    }
+    public void OnStartGameButton() => StartGame();
+    public void OnRestartButton() => SceneManager.LoadScene(SceneManager.GetActiveScene().name);
+    public void OnQuitButton() => Application.Quit();
 }

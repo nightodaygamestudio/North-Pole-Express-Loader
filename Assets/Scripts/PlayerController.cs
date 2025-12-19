@@ -7,6 +7,7 @@ using TMPro;
 [RequireComponent(typeof(CharacterController))]
 public class PlayerController : MonoBehaviour
 {
+    // ... (Andere Variablen wie bisher lassen) ...
     [Header("Movement & Speed")]
     public float baseMoveSpeed = 10f;
     public float rotateSpeed = 10f;
@@ -24,14 +25,10 @@ public class PlayerController : MonoBehaviour
     public bool useAnimation = true;
     public string moveParameterName = "IsMoving";
 
-    [Header("Stacking & Penalty")]
-    public Transform stackPoint; // HIER dein "Giftsack"-Objekt reinziehen!
-                                 // public GameObject giftVisualPrefab; // Brauchen wir nicht mehr!
-                                 // public GameObject giftPickupPrefab; // Brauchen wir nicht mehr zwingend, wir nutzen das Original
-
     [Header("Stack Settings")]
-    public float stackOffsetY = 0.9f; // Pro Geschenk 0.9 hoch
-    public float stackOffsetZ = 0.6f; // Immer 0.6 nach hinten versetzt
+    public Transform stackPoint;
+    public float stackOffsetY = 0.9f;
+    public float stackOffsetZ = 0.6f;
     public int maxStackSize = 20;
 
     private CharacterController controller;
@@ -52,15 +49,18 @@ public class PlayerController : MonoBehaviour
             if (useAnimation && animator != null) animator.SetBool(moveParameterName, false);
             return;
         }
-
         Move();
     }
 
+    // ... (Move, OnTriggerEnter, CollectGift, DropAllGifts bleiben GLEICH wie vorher) ...
+    // ... (Kopiere hier deine Move, OnTriggerEnter, CollectGift, DropAllGifts Methoden rein) ...
+    // Ich kürze das hier ab, damit du nur das Neue siehst:
+
     void Move()
     {
+        // (Dein bestehender Move-Code)
         float x = 0f;
         float z = 0f;
-
         if (Keyboard.current != null)
         {
             if (Keyboard.current.aKey.isPressed || Keyboard.current.leftArrowKey.isPressed) x -= 1f;
@@ -68,21 +68,15 @@ public class PlayerController : MonoBehaviour
             if (Keyboard.current.sKey.isPressed || Keyboard.current.downArrowKey.isPressed) z -= 1f;
             if (Keyboard.current.wKey.isPressed || Keyboard.current.upArrowKey.isPressed) z += 1f;
         }
-
         Vector3 direction = new Vector3(x, 0, z).normalized;
         bool isMoving = direction.magnitude >= 0.1f;
 
-        if (useAnimation && animator != null)
-        {
-            animator.SetBool(moveParameterName, isMoving);
-        }
+        if (useAnimation && animator != null) animator.SetBool(moveParameterName, isMoving);
 
         if (isMoving)
         {
             float targetAngle = Mathf.Atan2(direction.x, direction.z) * Mathf.Rad2Deg;
-            Quaternion rotation = Quaternion.Euler(0f, targetAngle, 0f);
-            transform.rotation = Quaternion.Lerp(transform.rotation, rotation, Time.deltaTime * rotateSpeed);
-
+            transform.rotation = Quaternion.Lerp(transform.rotation, Quaternion.Euler(0f, targetAngle, 0f), Time.deltaTime * rotateSpeed);
             Vector3 moveVector = direction * currentSpeed * Time.deltaTime;
             controller.Move(moveVector);
         }
@@ -94,89 +88,68 @@ public class PlayerController : MonoBehaviour
         transform.position = finalPos;
     }
 
+    // Diese Methode prüft die Kollision
     void OnTriggerEnter(Collider other)
     {
         if (other.CompareTag("Gift"))
         {
-            if (currentStack.Count < maxStackSize)
-            {
-                CollectGift(other.gameObject);
-            }
-            else
-            {
-                Debug.Log("Stapel voll!");
-            }
+            if (currentStack.Count < maxStackSize) CollectGift(other.gameObject);
         }
+        // WICHTIG: Hast du dem Schneemann den Tag "Snowman" gegeben?
         else if (other.CompareTag("Snowman"))
         {
             DropAllGifts();
+        }
+        // Falls du auch eine Ablade-Zone hast (wie vorhin besprochen)
+        else if (other.CompareTag("TrainZone"))
+        {
+            // Hier würde die Logik für GiveGifts rein, falls du sie nicht im TrainController hast
+            // Aber wir haben das ja im TrainController gelöst, also passt das so.
         }
     }
 
     void CollectGift(GameObject groundGift)
     {
-        // 1. Physik & Logik vom Boden-Objekt entfernen
-        // Collider ausschalten, damit wir es nicht nochmal einsammeln, während es auf dem Rücken ist
         Collider col = groundGift.GetComponent<Collider>();
         if (col != null) col.enabled = false;
-
-        // Despawner zerstören (damit es NICHT verschwindet)
         GiftDespawner despawner = groundGift.GetComponent<GiftDespawner>();
         if (despawner != null) Destroy(despawner);
 
-        // 2. An den Giftsack heften (Reparenting)
         groundGift.transform.SetParent(stackPoint);
-
-        // 3. Positionieren nach deiner Formel
-        // X = 0, Z = 0.6
-        // Y = Index * 0.9 (Erstes ist 0, Zweites 0.9, Drittes 1.8)
         float newY = currentStack.Count * stackOffsetY;
-
         groundGift.transform.localPosition = new Vector3(0f, newY, stackOffsetZ);
-        groundGift.transform.localRotation = Quaternion.identity; // Rotation nullen
-
-        // 4. Zur Liste hinzufügen
+        groundGift.transform.localRotation = Quaternion.identity;
         currentStack.Add(groundGift);
-
         UpdateSpeedAndUI();
     }
 
+    // Diese Methode verteilt die Geschenke im Kreis (hast du schon, nur zur Sicherheit)
     void DropAllGifts()
     {
         if (currentStack.Count == 0) return;
 
-        Debug.Log("Oh nein! Schneemann getroffen!");
-
-        // Wir gehen durch alle Geschenke auf dem Rücken
         foreach (var gift in currentStack)
         {
-            // 1. Vom Spieler lösen
-            gift.transform.SetParent(null); // Wieder in die Welt setzen
+            gift.transform.SetParent(null);
 
-            // 2. Zufällige Position berechnen
-            Vector2 randomCircle = Random.insideUnitCircle * 3f;
+            // ZUFALLS-KREIS LOGIK:
+            Vector2 randomCircle = Random.insideUnitCircle * 3f; // Radius 3
             Vector3 dropPos = transform.position + new Vector3(randomCircle.x, 0.5f, randomCircle.y);
 
-            // Grenzen checken
+            // Begrenzung, damit sie nicht aus der Map fliegen
             dropPos.x = Mathf.Clamp(dropPos.x, minX, maxX);
             dropPos.z = Mathf.Clamp(dropPos.z, minZ, maxZ);
 
             gift.transform.position = dropPos;
             gift.transform.rotation = Quaternion.identity;
 
-            // 3. Collider wieder anmachen (damit man sie wieder sammeln kann)
+            // Collider wieder anmachen und Despawner hinzufügen
             Collider col = gift.GetComponent<Collider>();
             if (col != null) col.enabled = true;
 
-            // 4. NEUEN Despawner hinzufügen (damit sie nach einer Weile weggehen, wenn man sie nicht holt)
-            // Wir fügen das Skript neu hinzu, dadurch startet der Timer von vorne
             if (gift.GetComponent<GiftDespawner>() == null)
-            {
                 gift.AddComponent<GiftDespawner>();
-            }
         }
-
-        // Liste leeren
         currentStack.Clear();
         UpdateSpeedAndUI();
     }
@@ -191,25 +164,34 @@ public class PlayerController : MonoBehaviour
         {
             int displayPercent = Mathf.RoundToInt(speedFactor * 100);
             speedDisplayUI.text = $"Speed: {displayPercent}%";
-
             if (displayPercent > 75) speedDisplayUI.color = Color.green;
             else if (displayPercent > 50) speedDisplayUI.color = Color.yellow;
             else speedDisplayUI.color = Color.red;
         }
     }
 
-    public int ClearStack()
+    // --- HIER IST DIE NEUE FUNKTION ---
+    // Gibt maximal 'neededAmount' zurück und behält den Rest
+    public int GiveGifts(int neededAmount)
     {
-        int amount = currentStack.Count;
-        // Beim Abladen am Zug zerstören wir die Objekte wirklich
-        foreach (var gift in currentStack)
+        // Wir können maximal so viele geben, wie wir haben
+        int amountToGive = Mathf.Min(currentStack.Count, neededAmount);
+
+        // Wir entfernen die obersten Geschenke (vom Ende der Liste)
+        for (int i = 0; i < amountToGive; i++)
         {
+            // Immer das letzte Element nehmen
+            int lastIndex = currentStack.Count - 1;
+            GameObject gift = currentStack[lastIndex];
+
+            // Aus Liste entfernen
+            currentStack.RemoveAt(lastIndex);
+
+            // Objekt zerstören (es ist ja jetzt im Zug)
             Destroy(gift);
         }
-        currentStack.Clear();
 
-        UpdateSpeedAndUI();
-
-        return amount;
+        UpdateSpeedAndUI(); // Speed wieder erhöhen!
+        return amountToGive;
     }
 }
