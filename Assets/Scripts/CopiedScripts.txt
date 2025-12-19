@@ -1,0 +1,788 @@
+// Auto-Generated Dump
+// Source: Assets/Scripts
+// Updated: 12/19/2025 2:09:38 PM
+
+===== FILE: GameManager.cs =====
+using UnityEngine;
+using UnityEngine.SceneManagement;
+using UnityEngine.InputSystem;
+using UnityEngine.UI; // WICHTIG
+
+public class GameManager : MonoBehaviour
+{
+    public static GameManager Instance;
+
+    [Header("UI Panels")]
+    public GameObject splashPanel;
+    public GameObject menuPanel;
+    public GameObject gamePanel;
+    public GameObject resultsPanel;
+
+    [Header("Game UI")]
+    public Text scoreText;
+    public Text livesText;
+    public Text finalScoreText; // Text im Results Panel
+
+    [Header("Settings")]
+    public int maxLives = 3;
+
+    public enum GameState { Splash, Menu, Game, Results }
+    public GameState CurrentState { get; private set; }
+
+    private int score;
+    private int currentLives;
+    private float timer;
+
+    void Awake()
+    {
+        if (Instance == null) Instance = this;
+        else Destroy(gameObject);
+    }
+
+    void Start()
+    {
+        ChangeState(GameState.Splash);
+    }
+
+    void Update()
+    {
+        if (CurrentState == GameState.Splash)
+        {
+            timer += Time.deltaTime;
+            bool mouseClicked = Mouse.current != null && Mouse.current.leftButton.wasPressedThisFrame;
+            if (timer >= 3.0f || mouseClicked) ChangeState(GameState.Menu);
+        }
+    }
+
+    public void StartGame()
+    {
+        score = 0;
+        currentLives = maxLives;
+        UpdateGameUI();
+
+        // Hier k�nnten wir auch die Schneem�nner resetten (machen wir im Spawner)
+        ChangeState(GameState.Game);
+    }
+
+    // --- NEU: Logik f�r Zug-Erfolg/Misserfolg ---
+    public void OnTrainDeparted(bool wasFull)
+    {
+        if (CurrentState != GameState.Game) return;
+
+        if (wasFull)
+        {
+            score += 100; // Punkte f�r erfolgreichen Zug
+            Debug.Log("Zug voll! +100 Punkte");
+        }
+        else
+        {
+            currentLives--;
+            Debug.Log("Zug nicht voll! Leben verloren.");
+            if (currentLives <= 0)
+            {
+                TriggerGameOver();
+            }
+        }
+        UpdateGameUI();
+    }
+
+    void UpdateGameUI()
+    {
+        if (scoreText) scoreText.text = $"Score: {score}";
+        if (livesText) livesText.text = $"Lives: {currentLives}";
+    }
+
+    public void ChangeState(GameState newState)
+    {
+        CurrentState = newState;
+
+        splashPanel.SetActive(false);
+        menuPanel.SetActive(false);
+        gamePanel.SetActive(false);
+        resultsPanel.SetActive(false);
+
+        switch (newState)
+        {
+            case GameState.Splash:
+                splashPanel.SetActive(true);
+                break;
+            case GameState.Menu:
+                menuPanel.SetActive(true);
+                break;
+            case GameState.Game:
+                gamePanel.SetActive(true);
+                // Wichtig: Beim State-Wechsel UI updaten
+                UpdateGameUI();
+                break;
+            case GameState.Results:
+                resultsPanel.SetActive(true);
+                if (finalScoreText) finalScoreText.text = $"Final Score: {score}";
+                break;
+        }
+    }
+
+    public void OnStartGameButton() => StartGame();
+    public void OnRestartButton() => SceneManager.LoadScene(SceneManager.GetActiveScene().name);
+    public void OnQuitButton() => Application.Quit();
+
+    public void TriggerGameOver()
+    {
+        ChangeState(GameState.Results);
+    }
+
+    public bool IsGameRunning() => CurrentState == GameState.Game;
+}
+===== END: GameManager.cs =====
+
+
+===== FILE: GiftDespawner.cs =====
+using UnityEngine;
+
+public class GiftDespawner : MonoBehaviour
+{
+    [Header("Settings")]
+    public float lifetime = 10f; // Wie lange existiert es insgesamt?
+    public float startBlinkingAt = 3f; // Ab wann (Restzeit) soll es blinken?
+
+    [Header("Blink Speed")]
+    public float slowBlinkInterval = 0.5f; // Langsames Blinken (Anfang)
+    public float fastBlinkInterval = 0.1f; // Schnelles Flackern (Ende)
+
+    private float age;
+    private float blinkTimer;
+    private Renderer[] renderers; // Alle MeshRenderer (falls das Geschenk aus mehreren Teilen besteht)
+    private bool isVisible = true;
+
+    void Start()
+    {
+        // Wir holen uns alle Renderer (auch von Kind-Objekten), damit das ganze Geschenk blinkt
+        renderers = GetComponentsInChildren<Renderer>();
+    }
+
+    void Update()
+    {
+        if (GameManager.Instance != null && !GameManager.Instance.IsGameRunning()) return;
+
+        age += Time.deltaTime;
+        float remainingTime = lifetime - age;
+
+        // 1. Zeit abgelaufen? -> Weg damit
+        if (remainingTime <= 0)
+        {
+            Destroy(gameObject);
+            return;
+        }
+
+        // 2. Soll es blinken? (Nur in den letzten X Sekunden)
+        if (remainingTime <= startBlinkingAt)
+        {
+            HandleBlinking(remainingTime);
+        }
+    }
+
+    void HandleBlinking(float remainingTime)
+    {
+        // Berechne, wie weit wir im Blink-Prozess sind (0 = Start Blinken, 1 = Tot)
+        // Wir kehren den Wert um, damit 1.0 = Start (3 sek) und 0.0 = Ende (0 sek) ist, das macht Lerp einfacher
+        float progress = remainingTime / startBlinkingAt;
+
+        // Lerp: Wir berechnen das aktuelle Intervall basierend auf der Restzeit.
+        // Wenn noch viel Zeit ist (progress 1), nutzen wir slowBlinkInterval.
+        // Wenn wenig Zeit ist (progress 0), nutzen wir fastBlinkInterval.
+        float currentInterval = Mathf.Lerp(fastBlinkInterval, slowBlinkInterval, progress);
+
+        blinkTimer += Time.deltaTime;
+
+        // Ist es Zeit den Status zu wechseln?
+        if (blinkTimer >= currentInterval)
+        {
+            ToggleVisuals();
+            blinkTimer = 0f;
+        }
+    }
+
+    void ToggleVisuals()
+    {
+        isVisible = !isVisible;
+
+        // Alle Renderer an/ausschalten
+        foreach (var rend in renderers)
+        {
+            rend.enabled = isVisible;
+        }
+    }
+}
+===== END: GiftDespawner.cs =====
+
+
+===== FILE: GiftSpawner.cs =====
+using UnityEngine;
+
+public class GiftSpawner : MonoBehaviour
+{
+    [Header("Geschenke Varianten")]
+    public GameObject giftPrefabA; // Erstes Design (z.B. Rot)
+    public GameObject giftPrefabB; // Zweites Design (z.B. Blau)
+
+    [Header("Settings")]
+    public float spawnInterval = 2.0f;
+    public float spawnY = 0.5f;
+
+    [Header("Spawn Area")]
+    public float minX = -30f;
+    public float maxX = 30f;
+    public float minZ = -13f;
+    public float maxZ = 9f;
+
+    private float timer;
+    private bool spawnNextTypeA = true; // Schalter f�r Abwechslung
+
+    void Update()
+    {
+        if (GameManager.Instance != null && !GameManager.Instance.IsGameRunning()) return;
+
+        timer += Time.deltaTime;
+
+        if (timer >= spawnInterval)
+        {
+            SpawnAlternatingGift();
+            timer = 0f;
+        }
+    }
+
+    void SpawnAlternatingGift()
+    {
+        // Zufallsposition
+        float randomX = Random.Range(minX, maxX);
+        float randomZ = Random.Range(minZ, maxZ);
+        Vector3 spawnPos = new Vector3(randomX, spawnY, randomZ);
+
+        // Welches Prefab?
+        GameObject prefabToSpawn = spawnNextTypeA ? giftPrefabA : giftPrefabB;
+
+        if (prefabToSpawn != null)
+        {
+            Instantiate(prefabToSpawn, spawnPos, Quaternion.identity);
+        }
+
+        // Schalter umlegen f�r das n�chste Mal
+        spawnNextTypeA = !spawnNextTypeA;
+    }
+}
+===== END: GiftSpawner.cs =====
+
+
+===== FILE: PlayerController.cs =====
+using UnityEngine;
+using System.Collections.Generic;
+using UnityEngine.InputSystem;
+using UnityEngine.UI;
+
+[RequireComponent(typeof(CharacterController))]
+public class PlayerController : MonoBehaviour
+{
+    [Header("Movement & Speed")]
+    public float baseMoveSpeed = 10f;
+    public float rotateSpeed = 10f;
+    public Text speedDisplayUI;
+
+    [Header("Boundaries")]
+    public float minX = -30f;
+    public float maxX = 30f;
+    public float minZ = -13f;
+    public float maxZ = 9f;
+    public float fixedY = 0f;
+
+    [Header("Animation")]
+    public Animator animator;
+    public bool useAnimation = true;
+    public string moveParameterName = "IsMoving";
+
+    [Header("Stacking & Penalty")]
+    public Transform stackPoint; // HIER dein "Giftsack"-Objekt reinziehen!
+                                 // public GameObject giftVisualPrefab; // Brauchen wir nicht mehr!
+                                 // public GameObject giftPickupPrefab; // Brauchen wir nicht mehr zwingend, wir nutzen das Original
+
+    [Header("Stack Settings")]
+    public float stackOffsetY = 0.9f; // Pro Geschenk 0.9 hoch
+    public float stackOffsetZ = 0.6f; // Immer 0.6 nach hinten versetzt
+    public int maxStackSize = 20;
+
+    private CharacterController controller;
+    private List<GameObject> currentStack = new List<GameObject>();
+    private float currentSpeed;
+
+    void Start()
+    {
+        controller = GetComponent<CharacterController>();
+        if (animator == null) animator = GetComponentInChildren<Animator>();
+        UpdateSpeedAndUI();
+    }
+
+    void Update()
+    {
+        if (GameManager.Instance != null && !GameManager.Instance.IsGameRunning())
+        {
+            if (useAnimation && animator != null) animator.SetBool(moveParameterName, false);
+            return;
+        }
+
+        Move();
+    }
+
+    void Move()
+    {
+        float x = 0f;
+        float z = 0f;
+
+        if (Keyboard.current != null)
+        {
+            if (Keyboard.current.aKey.isPressed || Keyboard.current.leftArrowKey.isPressed) x -= 1f;
+            if (Keyboard.current.dKey.isPressed || Keyboard.current.rightArrowKey.isPressed) x += 1f;
+            if (Keyboard.current.sKey.isPressed || Keyboard.current.downArrowKey.isPressed) z -= 1f;
+            if (Keyboard.current.wKey.isPressed || Keyboard.current.upArrowKey.isPressed) z += 1f;
+        }
+
+        Vector3 direction = new Vector3(x, 0, z).normalized;
+        bool isMoving = direction.magnitude >= 0.1f;
+
+        if (useAnimation && animator != null)
+        {
+            animator.SetBool(moveParameterName, isMoving);
+        }
+
+        if (isMoving)
+        {
+            float targetAngle = Mathf.Atan2(direction.x, direction.z) * Mathf.Rad2Deg;
+            Quaternion rotation = Quaternion.Euler(0f, targetAngle, 0f);
+            transform.rotation = Quaternion.Lerp(transform.rotation, rotation, Time.deltaTime * rotateSpeed);
+
+            Vector3 moveVector = direction * currentSpeed * Time.deltaTime;
+            controller.Move(moveVector);
+        }
+
+        Vector3 finalPos = transform.position;
+        finalPos.x = Mathf.Clamp(finalPos.x, minX, maxX);
+        finalPos.z = Mathf.Clamp(finalPos.z, minZ, maxZ);
+        finalPos.y = fixedY;
+        transform.position = finalPos;
+    }
+
+    void OnTriggerEnter(Collider other)
+    {
+        if (other.CompareTag("Gift"))
+        {
+            if (currentStack.Count < maxStackSize)
+            {
+                CollectGift(other.gameObject);
+            }
+            else
+            {
+                Debug.Log("Stapel voll!");
+            }
+        }
+        else if (other.CompareTag("Snowman"))
+        {
+            DropAllGifts();
+        }
+    }
+
+    void CollectGift(GameObject groundGift)
+    {
+        // 1. Physik & Logik vom Boden-Objekt entfernen
+        // Collider ausschalten, damit wir es nicht nochmal einsammeln, w�hrend es auf dem R�cken ist
+        Collider col = groundGift.GetComponent<Collider>();
+        if (col != null) col.enabled = false;
+
+        // Despawner zerst�ren (damit es NICHT verschwindet)
+        GiftDespawner despawner = groundGift.GetComponent<GiftDespawner>();
+        if (despawner != null) Destroy(despawner);
+
+        // 2. An den Giftsack heften (Reparenting)
+        groundGift.transform.SetParent(stackPoint);
+
+        // 3. Positionieren nach deiner Formel
+        // X = 0, Z = 0.6
+        // Y = Index * 0.9 (Erstes ist 0, Zweites 0.9, Drittes 1.8)
+        float newY = currentStack.Count * stackOffsetY;
+
+        groundGift.transform.localPosition = new Vector3(0f, newY, stackOffsetZ);
+        groundGift.transform.localRotation = Quaternion.identity; // Rotation nullen
+
+        // 4. Zur Liste hinzuf�gen
+        currentStack.Add(groundGift);
+
+        UpdateSpeedAndUI();
+    }
+
+    void DropAllGifts()
+    {
+        if (currentStack.Count == 0) return;
+
+        Debug.Log("Oh nein! Schneemann getroffen!");
+
+        // Wir gehen durch alle Geschenke auf dem R�cken
+        foreach (var gift in currentStack)
+        {
+            // 1. Vom Spieler l�sen
+            gift.transform.SetParent(null); // Wieder in die Welt setzen
+
+            // 2. Zuf�llige Position berechnen
+            Vector2 randomCircle = Random.insideUnitCircle * 3f;
+            Vector3 dropPos = transform.position + new Vector3(randomCircle.x, 0.5f, randomCircle.y);
+
+            // Grenzen checken
+            dropPos.x = Mathf.Clamp(dropPos.x, minX, maxX);
+            dropPos.z = Mathf.Clamp(dropPos.z, minZ, maxZ);
+
+            gift.transform.position = dropPos;
+            gift.transform.rotation = Quaternion.identity;
+
+            // 3. Collider wieder anmachen (damit man sie wieder sammeln kann)
+            Collider col = gift.GetComponent<Collider>();
+            if (col != null) col.enabled = true;
+
+            // 4. NEUEN Despawner hinzuf�gen (damit sie nach einer Weile weggehen, wenn man sie nicht holt)
+            // Wir f�gen das Skript neu hinzu, dadurch startet der Timer von vorne
+            if (gift.GetComponent<GiftDespawner>() == null)
+            {
+                gift.AddComponent<GiftDespawner>();
+            }
+        }
+
+        // Liste leeren
+        currentStack.Clear();
+        UpdateSpeedAndUI();
+    }
+
+    void UpdateSpeedAndUI()
+    {
+        float fullness = (float)currentStack.Count / (float)maxStackSize;
+        float speedFactor = 1.0f - (0.5f * fullness);
+        currentSpeed = baseMoveSpeed * speedFactor;
+
+        if (speedDisplayUI != null)
+        {
+            int displayPercent = Mathf.RoundToInt(speedFactor * 100);
+            speedDisplayUI.text = $"Speed: {displayPercent}%";
+
+            if (displayPercent > 75) speedDisplayUI.color = Color.green;
+            else if (displayPercent > 50) speedDisplayUI.color = Color.yellow;
+            else speedDisplayUI.color = Color.red;
+        }
+    }
+
+    public int ClearStack()
+    {
+        int amount = currentStack.Count;
+        // Beim Abladen am Zug zerst�ren wir die Objekte wirklich
+        foreach (var gift in currentStack)
+        {
+            Destroy(gift);
+        }
+        currentStack.Clear();
+
+        UpdateSpeedAndUI();
+
+        return amount;
+    }
+}
+===== END: PlayerController.cs =====
+
+
+===== FILE: SnowmanController.cs =====
+using UnityEngine;
+using System.Collections;
+
+public class SnowmanController : MonoBehaviour
+{
+    [Header("Movement")]
+    public float moveSpeed = 3f;
+    public float waitTime = 2f;
+
+    [Header("Wander Area")]
+    public float minX = -30f;
+    public float maxX = 30f;
+    public float minZ = -13f;
+    public float maxZ = 9f;
+
+    private Vector3 targetPosition;
+    private float timer;
+    private bool isWaiting;
+    private bool isSpawning = true; // Neu: Status f�r Spawn-Animation
+
+    void Start()
+    {
+        // Starte die Aufsteig-Animation
+        StartCoroutine(RiseFromGround());
+    }
+
+    IEnumerator RiseFromGround()
+    {
+        isSpawning = true;
+        Vector3 startPos = transform.position;
+        Vector3 endPos = new Vector3(startPos.x, 0f, startPos.z); // Ziel ist Bodenh�he 0
+
+        float elapsed = 0f;
+        float duration = 1.5f; // Dauer des Auftauchens
+
+        while (elapsed < duration)
+        {
+            transform.position = Vector3.Lerp(startPos, endPos, elapsed / duration);
+            elapsed += Time.deltaTime;
+            yield return null;
+        }
+
+        transform.position = endPos;
+        isSpawning = false;
+        SetNewRandomTarget(); // Erst jetzt Ziel suchen
+    }
+
+    void Update()
+    {
+        if (GameManager.Instance != null && !GameManager.Instance.IsGameRunning()) return;
+        if (isSpawning) return; // Nicht bewegen solange er auftaucht
+
+        if (isWaiting)
+        {
+            timer -= Time.deltaTime;
+            if (timer <= 0)
+            {
+                isWaiting = false;
+                SetNewRandomTarget();
+            }
+        }
+        else
+        {
+            transform.position = Vector3.MoveTowards(transform.position, targetPosition, moveSpeed * Time.deltaTime);
+
+            Vector3 direction = (targetPosition - transform.position).normalized;
+            if (direction != Vector3.zero)
+            {
+                Quaternion lookRot = Quaternion.LookRotation(direction);
+                transform.rotation = Quaternion.Slerp(transform.rotation, lookRot, Time.deltaTime * 5f);
+            }
+
+            if (Vector3.Distance(transform.position, targetPosition) < 0.1f)
+            {
+                isWaiting = true;
+                timer = waitTime;
+            }
+        }
+    }
+
+    void SetNewRandomTarget()
+    {
+        float x = Random.Range(minX, maxX);
+        float z = Random.Range(minZ, maxZ);
+        targetPosition = new Vector3(x, 0f, z); // Immer auf Y=0 bleiben beim Laufen
+    }
+}
+===== END: SnowmanController.cs =====
+
+
+===== FILE: SnowmanSpawner.cs =====
+using UnityEngine;
+using System.Collections.Generic;
+
+public class SnowmanSpawner : MonoBehaviour
+{
+    public static SnowmanSpawner Instance; // Singleton f�r einfachen Zugriff
+
+    public GameObject snowmanPrefab;
+    public int maxSnowmen = 7;
+
+    [Header("Spawn Area")]
+    public float minX = -30f;
+    public float maxX = 30f;
+    public float minZ = -13f;
+    public float maxZ = 9f;
+
+    private List<GameObject> activeSnowmen = new List<GameObject>();
+
+    void Awake()
+    {
+        Instance = this;
+    }
+
+    // Wird vom GameManager beim Start aufgerufen (manuell hinzuf�gen im GameManager StartGame w�re sauberer, aber so geht's automatisch)
+    void Update()
+    {
+        // Kleiner Hack: Wenn das Spiel startet und wir haben 0 Schneem�nner, spawn den ersten.
+        if (GameManager.Instance.IsGameRunning() && activeSnowmen.Count == 0)
+        {
+            SpawnSnowman();
+        }
+    }
+
+    public void SpawnSnowman()
+    {
+        if (activeSnowmen.Count >= maxSnowmen) return;
+
+        float randomX = Random.Range(minX, maxX);
+        float randomZ = Random.Range(minZ, maxZ);
+
+        // Startposition unter der Erde (Y = -2)
+        Vector3 spawnPos = new Vector3(randomX, -2f, randomZ);
+
+        GameObject newSnowman = Instantiate(snowmanPrefab, spawnPos, Quaternion.identity);
+        activeSnowmen.Add(newSnowman);
+    }
+
+    public void ResetSnowmen()
+    {
+        foreach (var snowman in activeSnowmen)
+        {
+            Destroy(snowman);
+        }
+        activeSnowmen.Clear();
+        // Der erste spawnt dann wieder automatisch im Update
+    }
+}
+===== END: SnowmanSpawner.cs =====
+
+
+===== FILE: TrainController.cs =====
+using UnityEngine;
+using UnityEngine.UI;
+
+public class TrainController : MonoBehaviour
+{
+    [Header("Settings")]
+    public float speed = 15f;
+    public float waitTime = 10f;
+    public float spawnX = 60f;
+    public float stopX = 0f;
+    public float despawnX = -80f;
+
+    [Header("Visuals")]
+    public GameObject emptyWagonVisual;
+    public GameObject fullWagonVisual;
+    public Slider timerSlider;
+    public Text counterText;
+
+    private bool isWaiting = false;
+    private bool isLeaving = false;
+    private float currentWaitTimer;
+    private int currentGifts = 0;
+    private int requiredGifts = 10;
+
+    // Wir merken uns beim Abfahren, ob wir voll waren, f�r die Auswertung sp�ter
+    private bool wasFullWhenDeparted = false;
+
+    void Start()
+    {
+        ResetTrain(true); // true = Initialer Reset
+    }
+
+    void Update()
+    {
+        if (GameManager.Instance != null && !GameManager.Instance.IsGameRunning()) return;
+
+        // 1. Einfahren
+        if (!isWaiting && !isLeaving)
+        {
+            Vector3 targetPos = new Vector3(stopX, transform.position.y, transform.position.z);
+            transform.position = Vector3.MoveTowards(transform.position, targetPos, speed * Time.deltaTime);
+
+            if (Mathf.Abs(transform.position.x - stopX) < 0.1f) StartWaiting();
+        }
+        // 2. Warten
+        else if (isWaiting)
+        {
+            if (currentGifts >= requiredGifts && !fullWagonVisual.activeSelf) SetWagonVisuals(true);
+
+            currentWaitTimer -= Time.deltaTime;
+            if (timerSlider) timerSlider.value = currentWaitTimer / waitTime;
+
+            if (currentWaitTimer <= 0 || (currentGifts >= requiredGifts && currentWaitTimer < (waitTime - 2f)))
+            {
+                Depart();
+            }
+        }
+        // 3. Abfahren
+        else if (isLeaving)
+        {
+            transform.Translate(Vector3.left * speed * Time.deltaTime);
+
+            // Wenn der Zug ganz links angekommen ist (-80)
+            if (transform.position.x < despawnX)
+            {
+                // HIER: Schneemann spawnen!
+                if (SnowmanSpawner.Instance != null)
+                {
+                    SnowmanSpawner.Instance.SpawnSnowman();
+                }
+
+                // HIER: Auswertung an GameManager senden (Score oder Leben abziehen)
+                // Wir machen das erst, wenn der Zug weg ist, damit es fair wirkt
+                GameManager.Instance.OnTrainDeparted(wasFullWhenDeparted);
+
+                ResetTrain(false);
+            }
+        }
+    }
+
+    void StartWaiting()
+    {
+        isWaiting = true;
+        currentWaitTimer = waitTime;
+        currentGifts = 0;
+        requiredGifts = Random.Range(3, 8);
+        UpdateUI();
+    }
+
+    void Depart()
+    {
+        isWaiting = false;
+        isLeaving = true;
+        // Speichern ob wir erfolgreich waren
+        wasFullWhenDeparted = (currentGifts >= requiredGifts);
+    }
+
+    void ResetTrain(bool initial)
+    {
+        transform.position = new Vector3(spawnX, transform.position.y, transform.position.z);
+        isLeaving = false;
+        isWaiting = false;
+        SetWagonVisuals(false);
+
+        // Wenn das Spiel komplett neu startet (Initial), m�ssen wir Schneem�nner resetten
+        if (initial && SnowmanSpawner.Instance != null)
+        {
+            SnowmanSpawner.Instance.ResetSnowmen();
+        }
+    }
+
+    void SetWagonVisuals(bool isFull)
+    {
+        if (emptyWagonVisual) emptyWagonVisual.SetActive(!isFull);
+        if (fullWagonVisual) fullWagonVisual.SetActive(isFull);
+    }
+
+    void UpdateUI()
+    {
+        if (counterText) counterText.text = $"{currentGifts} / {requiredGifts}";
+    }
+
+    void OnTriggerEnter(Collider other)
+    {
+        if (isWaiting && other.CompareTag("Player"))
+        {
+            PlayerController player = other.GetComponent<PlayerController>();
+            if (player != null)
+            {
+                int gifts = player.ClearStack();
+                if (gifts > 0)
+                {
+                    currentGifts += gifts;
+                    UpdateUI();
+                    if (currentGifts >= requiredGifts) SetWagonVisuals(true);
+                }
+            }
+        }
+    }
+}
+===== END: TrainController.cs =====
+
+
