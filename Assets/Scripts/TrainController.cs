@@ -1,6 +1,6 @@
 using UnityEngine;
-using UnityEngine.UI; // Für Slider
-using TMPro;          // WICHTIG: Für TextMeshPro
+using UnityEngine.UI;
+using TMPro;
 
 [RequireComponent(typeof(AudioSource))]
 public class TrainController : MonoBehaviour
@@ -11,9 +11,14 @@ public class TrainController : MonoBehaviour
     public float spawnX = 60f;
     public float stopX = 0f;
     public float despawnX = -80f;
-
-    // NEU: Festgelegte Anzahl (Standard 10)
     public int giftsNeededPerRound = 10;
+
+    [Header("Start Delay")]
+    // HIER GEÄNDERT: Von 5.0f auf 7.0f erhöht
+    public float initialStartDelay = 7.0f; // Nur in Runde 1
+
+    [Header("Collision")]
+    public Collider deliveryZoneCollider;
 
     [Header("Audio")]
     public AudioClip arrivalSound;
@@ -23,18 +28,20 @@ public class TrainController : MonoBehaviour
     public GameObject fullWagonVisual;
 
     [Header("UI (World Space)")]
-    public Slider timerSlider;   // Der existierende Timer-Slider (wenn du ihn behalten willst)
-
-    // NEU: Slider und Text für die Pakete
+    public Slider timerSlider;
     public Slider cargoSlider;
-    public TMP_Text cargoText;       // "0 / 10"
+    public TMP_Text cargoText;
 
+    // Zustände
     private bool isWaiting = false;
     private bool isLeaving = false;
+    private bool isInStartDelay = false;
+
     private float currentWaitTimer;
+    private float startDelayTimer;
+
     private int currentGifts = 0;
     private int requiredGifts;
-    private bool wasFullWhenDeparted = false;
     private AudioSource audioSource;
 
     void Start()
@@ -42,6 +49,10 @@ public class TrainController : MonoBehaviour
         audioSource = GetComponent<AudioSource>();
         audioSource.playOnAwake = false;
         audioSource.loop = false;
+
+        if (deliveryZoneCollider != null) deliveryZoneCollider.enabled = false;
+
+        // Reset mit "true" für erste Runde (Delay)
         ResetTrain(true);
     }
 
@@ -55,6 +66,18 @@ public class TrainController : MonoBehaviour
         else
         {
             audioSource.UnPause();
+        }
+
+        // Start Verzögerung (nur Runde 1)
+        if (isInStartDelay)
+        {
+            startDelayTimer -= Time.deltaTime;
+            if (startDelayTimer <= 0)
+            {
+                isInStartDelay = false;
+                PlayArrivalSound();
+            }
+            return;
         }
 
         // 1. Einfahren
@@ -71,17 +94,9 @@ public class TrainController : MonoBehaviour
         // 2. Warten
         else if (isWaiting)
         {
-            // Visual Update wenn voll
-            if (currentGifts >= requiredGifts && !fullWagonVisual.activeSelf) SetWagonVisuals(true);
-
             currentWaitTimer -= Time.deltaTime;
-
-            // Timer Slider Logik (optional, falls du den noch nutzt)
             if (timerSlider) timerSlider.value = currentWaitTimer / waitTime;
 
-            // Abfahrtbedingungen: Zeit um ODER (Voll UND kurze Wartezeit vorbei)
-            // Wir lassen ihn sofort abfahren, wenn er voll ist? Oder soll er warten? 
-            // Dein Code war: Er fährt ab, wenn Zeit um.
             if (currentWaitTimer <= 0)
             {
                 Depart();
@@ -92,12 +107,10 @@ public class TrainController : MonoBehaviour
         {
             transform.Translate(Vector3.left * speed * Time.deltaTime);
 
+            // Wenn Zug weg ist -> Reset
             if (transform.position.x < despawnX)
             {
-                if (SnowmanSpawner.Instance != null) SnowmanSpawner.Instance.SpawnSnowman();
-
-                // Hier checken wir, ob er voll war für Punkte/Leben
-                GameManager.Instance.OnTrainDeparted(wasFullWhenDeparted);
+                // GameManager kümmert sich um Schneemänner und Runden, wir resetten nur den Zug
                 ResetTrain(false);
             }
         }
@@ -109,9 +122,9 @@ public class TrainController : MonoBehaviour
         currentWaitTimer = waitTime;
 
         currentGifts = 0;
-        // HIER: Feste Anzahl nehmen statt Random
         requiredGifts = giftsNeededPerRound;
 
+        if (deliveryZoneCollider != null) deliveryZoneCollider.enabled = true;
         UpdateUI();
     }
 
@@ -119,7 +132,16 @@ public class TrainController : MonoBehaviour
     {
         isWaiting = false;
         isLeaving = true;
-        wasFullWhenDeparted = (currentGifts >= requiredGifts);
+
+        if (deliveryZoneCollider != null) deliveryZoneCollider.enabled = false;
+
+        // Abrechnung
+        bool isFull = (currentGifts >= requiredGifts);
+
+        if (GameManager.Instance != null)
+        {
+            GameManager.Instance.OnTrainDeparted(isFull);
+        }
     }
 
     void ResetTrain(bool initial)
@@ -127,17 +149,36 @@ public class TrainController : MonoBehaviour
         transform.position = new Vector3(spawnX, transform.position.y, transform.position.z);
         isLeaving = false;
         isWaiting = false;
+
+        if (deliveryZoneCollider != null) deliveryZoneCollider.enabled = false;
         SetWagonVisuals(false);
 
+        if (initial)
+        {
+            // Runde 1: Delay
+            isInStartDelay = true;
+            startDelayTimer = initialStartDelay;
+
+            currentGifts = 0;
+            requiredGifts = giftsNeededPerRound;
+            UpdateUI();
+
+            // Spawner Reset
+            if (SnowmanSpawner.Instance != null) SnowmanSpawner.Instance.ResetSpawner();
+        }
+        else
+        {
+            // Folgerunden: Sofort Sound
+            PlayArrivalSound();
+        }
+    }
+
+    void PlayArrivalSound()
+    {
         if (arrivalSound != null)
         {
             audioSource.clip = arrivalSound;
             audioSource.Play();
-        }
-
-        if (initial && SnowmanSpawner.Instance != null)
-        {
-            SnowmanSpawner.Instance.ResetSnowmen();
         }
     }
 
@@ -149,54 +190,33 @@ public class TrainController : MonoBehaviour
 
     void UpdateUI()
     {
-        // 1. Text aktualisieren
-        // Zeigt z.B. "0 / 10" oder "10 / 10" an
         if (cargoText != null)
-        {
             cargoText.text = $"{currentGifts} / {requiredGifts}";
-        }
 
-        // 2. Slider aktualisieren (Berechnung für 0 bis 1 Range)
         if (cargoSlider != null)
         {
-            // Sicherstellen, dass wir nicht durch 0 teilen
             if (requiredGifts > 0)
-            {
-                // WICHTIG: (float) benutzen, sonst kommt bei Ganzzahlen (5/10) immer 0 raus!
-                float percentage = (float)currentGifts / (float)requiredGifts;
-                cargoSlider.value = percentage;
-            }
+                cargoSlider.value = (float)currentGifts / (float)requiredGifts;
             else
-            {
-                cargoSlider.value = 1f; // Falls 0 benötigt werden, ist er voll
-            }
+                cargoSlider.value = 1f;
         }
     }
 
-    void OnTriggerEnter(Collider other)
+    public void AttemptDelivery(PlayerController player)
     {
-        // Nur wenn wir warten und der Spieler kommt
-        if (isWaiting && other.CompareTag("Player"))
+        if (isWaiting && player != null)
         {
-            PlayerController player = other.GetComponent<PlayerController>();
-            if (player != null)
+            int missing = requiredGifts - currentGifts;
+            if (missing > 0)
             {
-                // WICHTIG: Berechnen, wie viele noch fehlen
-                int missing = requiredGifts - currentGifts;
-
-                if (missing > 0)
+                int taken = player.GiveGifts(missing);
+                if (taken > 0)
                 {
-                    // Wir nehmen nur so viele vom Spieler, wie fehlen!
-                    int taken = player.GiveGifts(missing);
-
                     currentGifts += taken;
                     UpdateUI();
-
                     if (currentGifts >= requiredGifts)
                     {
                         SetWagonVisuals(true);
-                        // Optional: Wenn voll, sofort Abfahrt-Timer verkürzen?
-                        // currentWaitTimer = 1.0f; // z.B. nur noch 1 Sekunde warten
                     }
                 }
             }

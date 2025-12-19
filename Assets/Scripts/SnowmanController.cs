@@ -1,11 +1,11 @@
 using UnityEngine;
 using System.Collections;
 
-[RequireComponent(typeof(CharacterController))] // Erzwingt den Controller
+[RequireComponent(typeof(CharacterController))]
 public class SnowmanController : MonoBehaviour
 {
     [Header("Movement")]
-    public float moveSpeed = 3f;
+    public float moveSpeed = 3f; // Wird vom Spawner überschrieben
     public float waitTime = 2f;
     public float rotateSpeed = 5f;
 
@@ -14,13 +14,9 @@ public class SnowmanController : MonoBehaviour
     public float maxX = 30f;
     public float minZ = -13f;
     public float maxZ = 9f;
-
-    // HIER: Damit nageln wir ihn auf dem Boden fest, genau wie den Player
     public float fixedY = 0f;
 
     [Header("Model Correction")]
-    // Wenn dein Modell liegt, drehen wir das Visual-Child oder das Objekt selbst.
-    // Falls das ganze Objekt gedreht werden muss:
     public float xRotationCorrection = -90f;
 
     private Vector3 targetPosition;
@@ -33,29 +29,27 @@ public class SnowmanController : MonoBehaviour
     void Start()
     {
         controller = GetComponent<CharacterController>();
-
-        // Sofortige Korrektur der Rotation beim Start
-        // Wir setzen die Rotation hart, damit er steht
+        // Rotation korrigieren
         transform.rotation = Quaternion.Euler(xRotationCorrection, 0f, 0f);
-
         StartCoroutine(RiseFromGround());
+    }
+
+    // Methode zum Ändern der Geschwindigkeit
+    public void SetSpeed(float newSpeed)
+    {
+        moveSpeed = newSpeed;
     }
 
     IEnumerator RiseFromGround()
     {
         isSpawning = true;
-
-        // Startposition (unter der Erde)
         Vector3 startPos = transform.position;
-        // Zielposition (auf dem Boden)
         Vector3 endPos = new Vector3(startPos.x, fixedY, startPos.z);
-
         float elapsed = 0f;
         float duration = 1.5f;
 
         while (elapsed < duration)
         {
-            // Wir bewegen nur die Position, Rotation bleibt fest korrigiert
             transform.position = Vector3.Lerp(startPos, endPos, elapsed / duration);
             elapsed += Time.deltaTime;
             yield return null;
@@ -71,8 +65,7 @@ public class SnowmanController : MonoBehaviour
         if (GameManager.Instance != null && !GameManager.Instance.IsGameRunning()) return;
         if (isSpawning) return;
 
-        // Wir erzwingen permanent die X-Rotation, falls die Physik sie verhaut
-        // Aber wir erlauben Y-Rotation (drehen zum Ziel)
+        // Rotations-Korrektur (X-Achse festnageln)
         float currentYRot = transform.rotation.eulerAngles.y;
         transform.rotation = Quaternion.Euler(xRotationCorrection, currentYRot, 0f);
 
@@ -93,26 +86,22 @@ public class SnowmanController : MonoBehaviour
 
     void MoveToTarget()
     {
-        // 1. Richtung berechnen (nur X und Z, Y ignorieren wir)
         Vector3 direction = (targetPosition - transform.position).normalized;
-        direction.y = 0; // Wichtig: Keine Bewegung nach oben/unten berechnen
+        direction.y = 0;
 
         if (direction != Vector3.zero)
         {
-            // 2. Rotation zum Ziel (aber unter Beibehaltung der -90 X-Rotation)
+            // Rotation berechnen
             Quaternion targetRot = Quaternion.LookRotation(direction);
-            // Wir kombinieren die Ziel-Y-Rotation mit deiner festen X-Korrektur
             Quaternion correctedTargetRot = Quaternion.Euler(xRotationCorrection, targetRot.eulerAngles.y, 0f);
-
             transform.rotation = Quaternion.Slerp(transform.rotation, correctedTargetRot, Time.deltaTime * rotateSpeed);
 
-            // 3. Bewegung mit CharacterController (wie beim Player)
+            // Bewegung
             Vector3 moveVector = direction * moveSpeed * Time.deltaTime;
             controller.Move(moveVector);
         }
 
-        // 4. Ziel erreicht Check
-        // Wir ignorieren hier auch die Höhe beim Distanz-Check
+        // Ziel-Check (flach)
         Vector3 flatPos = new Vector3(transform.position.x, 0, transform.position.z);
         Vector3 flatTarget = new Vector3(targetPosition.x, 0, targetPosition.z);
 
@@ -122,9 +111,9 @@ public class SnowmanController : MonoBehaviour
             timer = waitTime;
         }
 
-        // 5. Hard Fix für Position (genau wie beim Player)
+        // Position auf Boden zwingen
         Vector3 clampedPos = transform.position;
-        clampedPos.y = fixedY; // Auf Boden zwingen
+        clampedPos.y = fixedY;
         transform.position = clampedPos;
     }
 

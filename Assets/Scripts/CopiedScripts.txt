@@ -1,6 +1,6 @@
 // Auto-Generated Dump
 // Source: Assets/Scripts
-// Updated: 12/19/2025 3:12:20 PM
+// Updated: 12/19/2025 5:47:15 PM
 
 ===== FILE: BackgroundMusicManager.cs =====
 using UnityEngine;
@@ -55,6 +55,30 @@ public class BackgroundMusicManager : MonoBehaviour
 ===== END: BackgroundMusicManager.cs =====
 
 
+===== FILE: DeliveryZone.cs =====
+using UnityEngine;
+
+public class DeliveryZone : MonoBehaviour
+{
+    // Ziehe hier im Inspektor dein Haupt-Zug-Objekt rein (wo der TrainController drauf liegt)
+    public TrainController trainController;
+
+    private void OnTriggerStay(Collider other)
+    {
+        // Wir pr�fen nur, ob es der Spieler ist
+        if (other.CompareTag("Player"))
+        {
+            // Wir leiten den Spieler an den Zug weiter
+            if (trainController != null)
+            {
+                trainController.AttemptDelivery(other.GetComponent<PlayerController>());
+            }
+        }
+    }
+}
+===== END: DeliveryZone.cs =====
+
+
 ===== FILE: GameManager.cs =====
 using UnityEngine;
 using UnityEngine.SceneManagement;
@@ -65,6 +89,10 @@ public class GameManager : MonoBehaviour
 {
     public static GameManager Instance;
 
+    // Statische Variable, die den Szenenwechsel �berlebt
+    // Wenn true, starten wir direkt ins Spiel (Skip Splash & Menu)
+    private static bool restartDirectly = false;
+
     [Header("UI Panels")]
     public GameObject splashPanel;
     public GameObject menuPanel;
@@ -72,22 +100,23 @@ public class GameManager : MonoBehaviour
     public GameObject resultsPanel;
 
     [Header("Game UI Elements (TMP)")]
-    public TMP_Text scoreText;
-    public TMP_Text highscoreText;
-    public TMP_Text roundText;
+    public TMP_Text roundText;         // Aktuelle Runde oben im Spiel
+    public TMP_Text highestRoundText;  // Rekord oben im Spiel
     public TMP_Text livesText;
-    public TMP_Text finalScoreText;  // WICHTIG f�r Game Over
+
+    [Header("Results UI")]
+    public TMP_Text finalRoundText;    // Text im Game Over Screen (Ergebnis)
 
     [Header("Settings")]
     public int maxLives = 3;
-    public float splashDuration = 3.0f;
+    public float splashDuration = 8.0f;
 
     public enum GameState { Splash, Menu, Game, Results }
     public GameState CurrentState { get; private set; }
 
-    private int score;
-    private int highscore;
-    private int round;
+    // Runden-Logik
+    private int currentRound;
+    private int highestRound;
     private int currentLives;
     private float timer;
 
@@ -99,18 +128,47 @@ public class GameManager : MonoBehaviour
 
     void Start()
     {
-        highscore = PlayerPrefs.GetInt("Highscore", 0);
+        // Laden der h�chsten Runde
+        highestRound = PlayerPrefs.GetInt("HighestRound", 1);
         UpdateGameUI();
-        ChangeState(GameState.Splash);
+
+        // CHECK: Kommen wir von einem "Restart"?
+        if (restartDirectly)
+        {
+            restartDirectly = false; // Flag zur�cksetzen
+            StartGame(); // Sofort ins Spiel starten!
+        }
+        else
+        {
+            // Normaler Start -> Splash Screen zeigen
+            ChangeState(GameState.Splash);
+        }
     }
 
     void Update()
     {
+        // Logik f�r den Splash Screen
         if (CurrentState == GameState.Splash)
         {
             timer += Time.deltaTime;
-            bool mouseClicked = Mouse.current != null && Mouse.current.leftButton.wasPressedThisFrame;
-            if (timer >= splashDuration || mouseClicked) ChangeState(GameState.Menu);
+            bool inputDetected = false;
+
+            if (Mouse.current != null && Mouse.current.leftButton.wasPressedThisFrame) inputDetected = true;
+            if (Keyboard.current != null && Keyboard.current.anyKey.wasPressedThisFrame) inputDetected = true;
+            if (Gamepad.current != null && Gamepad.current.buttonSouth.wasPressedThisFrame) inputDetected = true;
+
+            if (timer >= splashDuration || inputDetected)
+            {
+                SkipSplash();
+            }
+        }
+    }
+
+    public void SkipSplash()
+    {
+        if (CurrentState == GameState.Splash)
+        {
+            ChangeState(GameState.Menu);
         }
     }
 
@@ -129,27 +187,40 @@ public class GameManager : MonoBehaviour
                 if (splashPanel) splashPanel.SetActive(true);
                 timer = 0f;
                 break;
+
             case GameState.Menu:
                 if (menuPanel) menuPanel.SetActive(true);
-                if (BackgroundMusicManager.Instance != null) BackgroundMusicManager.Instance.StartMusic();
+                if (BackgroundMusicManager.Instance != null)
+                    BackgroundMusicManager.Instance.StartMusic();
+
+                // Im Men� schon den Rekord anzeigen
+                if (highestRoundText) highestRoundText.text = $"Best Round: {highestRound}";
                 break;
+
             case GameState.Game:
                 if (gamePanel) gamePanel.SetActive(true);
                 UpdateGameUI();
                 break;
+
             case GameState.Results:
                 if (resultsPanel) resultsPanel.SetActive(true);
-                // HIER: Den finalen Score in den Text schreiben
-                if (finalScoreText) finalScoreText.text = $"Final Score: {score}";
+                // Ergebnis anzeigen: Zeige Runde und Rekord
+                if (finalRoundText)
+                {
+                    finalRoundText.text = $"GAME OVER\n\nYou reached Round: {currentRound}\n\nHighest Round: {highestRound}";
+                }
                 break;
         }
     }
 
     public void StartGame()
     {
-        score = 0;
         currentLives = maxLives;
-        round = 1;
+        currentRound = 1;
+
+        // WICHTIG: Spawner komplett zur�cksetzen (auch Speed)
+        if (SnowmanSpawner.Instance != null) SnowmanSpawner.Instance.ResetSpawner();
+
         UpdateGameUI();
         ChangeState(GameState.Game);
     }
@@ -161,40 +232,51 @@ public class GameManager : MonoBehaviour
 
         if (wasFull)
         {
-            // Zug voll -> Punkte, KEIN Leben verloren
-            score += 100;
-            if (score > highscore)
+            // Zug voll -> N�chste Runde
+            currentRound++;
+
+            // Rekord pr�fen
+            if (currentRound > highestRound)
             {
-                highscore = score;
-                PlayerPrefs.SetInt("Highscore", highscore);
+                highestRound = currentRound;
+                PlayerPrefs.SetInt("HighestRound", highestRound);
                 PlayerPrefs.Save();
             }
-            Debug.Log("Zug voll! +100 Punkte");
+
+            // --- SCHWIERIGKEITSGRAD ---
+            if (SnowmanSpawner.Instance != null)
+            {
+                if (currentRound <= 7)
+                {
+                    // Bis Runde 7: Mehr Schneem�nner
+                    SnowmanSpawner.Instance.SpawnSnowman();
+                }
+                else
+                {
+                    // Ab Runde 7: Schneem�nner werden schneller!
+                    SnowmanSpawner.Instance.IncreaseGlobalSpeed(1.0f);
+                }
+            }
         }
         else
         {
-            // Zug nicht voll -> Leben verlieren
+            // Zug nicht voll -> Leben weg
             currentLives--;
-            Debug.Log("Zug nicht voll! Leben verloren.");
-
             if (currentLives <= 0)
             {
                 TriggerGameOver();
-                return; // Wichtig: Hier abbrechen, damit Runde nicht hochz�hlt
+                return;
             }
         }
 
-        // Wenn noch Leben da sind, n�chste Runde
-        round++;
         UpdateGameUI();
     }
 
     void UpdateGameUI()
     {
-        if (scoreText) scoreText.text = $"Score: {score}";
         if (livesText) livesText.text = $"Lives: {currentLives}";
-        if (highscoreText) highscoreText.text = $"Highscore: {highscore}";
-        if (roundText) roundText.text = $"Round: {round}";
+        if (roundText) roundText.text = $"Round: {currentRound}";
+        if (highestRoundText) highestRoundText.text = $"Best: {highestRound}";
     }
 
     public void TriggerGameOver()
@@ -204,8 +286,16 @@ public class GameManager : MonoBehaviour
 
     public bool IsGameRunning() => CurrentState == GameState.Game;
 
+    // --- UI Button Callbacks ---
     public void OnStartGameButton() => StartGame();
-    public void OnRestartButton() => SceneManager.LoadScene(SceneManager.GetActiveScene().name);
+
+    public void OnRestartButton()
+    {
+        // Wir setzen das Flag, damit wir beim Neuladen den Splash �berspringen
+        restartDirectly = true;
+        SceneManager.LoadScene(SceneManager.GetActiveScene().name);
+    }
+
     public void OnQuitButton() => Application.Quit();
 }
 ===== END: GameManager.cs =====
@@ -352,13 +442,11 @@ public class GiftSpawner : MonoBehaviour
 using UnityEngine;
 using System.Collections.Generic;
 using UnityEngine.InputSystem;
-using UnityEngine.UI;
 using TMPro;
 
 [RequireComponent(typeof(CharacterController))]
 public class PlayerController : MonoBehaviour
 {
-    // ... (Andere Variablen wie bisher lassen) ...
     [Header("Movement & Speed")]
     public float baseMoveSpeed = 10f;
     public float rotateSpeed = 10f;
@@ -374,6 +462,7 @@ public class PlayerController : MonoBehaviour
     [Header("Animation")]
     public Animator animator;
     public bool useAnimation = true;
+    // Dieser Parameter steuert den Wechsel zwischen Idle (false) und Run (true) im Animator
     public string moveParameterName = "IsMoving";
 
     [Header("Stack Settings")]
@@ -403,13 +492,8 @@ public class PlayerController : MonoBehaviour
         Move();
     }
 
-    // ... (Move, OnTriggerEnter, CollectGift, DropAllGifts bleiben GLEICH wie vorher) ...
-    // ... (Kopiere hier deine Move, OnTriggerEnter, CollectGift, DropAllGifts Methoden rein) ...
-    // Ich k�rze das hier ab, damit du nur das Neue siehst:
-
     void Move()
     {
-        // (Dein bestehender Move-Code)
         float x = 0f;
         float z = 0f;
         if (Keyboard.current != null)
@@ -422,6 +506,9 @@ public class PlayerController : MonoBehaviour
         Vector3 direction = new Vector3(x, 0, z).normalized;
         bool isMoving = direction.magnitude >= 0.1f;
 
+        // Hier wird der Animator gesteuert:
+        // isMoving = true -> Lauf-Animation
+        // isMoving = false -> Idle-Animation
         if (useAnimation && animator != null) animator.SetBool(moveParameterName, isMoving);
 
         if (isMoving)
@@ -455,6 +542,14 @@ public class PlayerController : MonoBehaviour
     {
         Collider col = groundGift.GetComponent<Collider>();
         if (col != null) col.enabled = false;
+
+        // BUG FIX: Renderer erzwingen
+        Renderer[] renderers = groundGift.GetComponentsInChildren<Renderer>();
+        foreach (var rend in renderers)
+        {
+            rend.enabled = true;
+        }
+
         GiftDespawner despawner = groundGift.GetComponent<GiftDespawner>();
         if (despawner != null) Destroy(despawner);
 
@@ -476,12 +571,18 @@ public class PlayerController : MonoBehaviour
             Vector3 dropPos = transform.position + new Vector3(randomCircle.x, 0.5f, randomCircle.y);
             dropPos.x = Mathf.Clamp(dropPos.x, minX, maxX);
             dropPos.z = Mathf.Clamp(dropPos.z, minZ, maxZ);
+
             gift.transform.position = dropPos;
             gift.transform.rotation = Quaternion.identity;
 
             Collider col = gift.GetComponent<Collider>();
             if (col != null) col.enabled = true;
-            if (gift.GetComponent<GiftDespawner>() == null) gift.AddComponent<GiftDespawner>();
+
+            Renderer[] renderers = gift.GetComponentsInChildren<Renderer>();
+            foreach (var r in renderers) r.enabled = true;
+
+            if (gift.GetComponent<GiftDespawner>() == null)
+                gift.AddComponent<GiftDespawner>();
         }
         currentStack.Clear();
         UpdateSpeedAndUI();
@@ -503,43 +604,70 @@ public class PlayerController : MonoBehaviour
         }
     }
 
-    // --- HIER IST DIE NEUE FUNKTION ---
-    // Gibt maximal 'neededAmount' zur�ck und beh�lt den Rest
     public int GiveGifts(int neededAmount)
     {
-        // Wir k�nnen maximal so viele geben, wie wir haben
         int amountToGive = Mathf.Min(currentStack.Count, neededAmount);
-
-        // Wir entfernen die obersten Geschenke (vom Ende der Liste)
         for (int i = 0; i < amountToGive; i++)
         {
-            // Immer das letzte Element nehmen
             int lastIndex = currentStack.Count - 1;
             GameObject gift = currentStack[lastIndex];
-
-            // Aus Liste entfernen
             currentStack.RemoveAt(lastIndex);
-
-            // Objekt zerst�ren (es ist ja jetzt im Zug)
             Destroy(gift);
         }
-
-        UpdateSpeedAndUI(); // Speed wieder erh�hen!
+        UpdateSpeedAndUI();
         return amountToGive;
     }
 }
 ===== END: PlayerController.cs =====
 
 
+===== FILE: PulsingText.cs =====
+using UnityEngine;
+using TMPro;
+
+/// <summary>
+/// Creates a gentle pulsing effect by modifying the font size of a TextMeshPro object over time.
+/// Used to draw attention to UI elements.
+/// </summary>
+public class PulsingText : MonoBehaviour
+{
+    [Header("Settings")]
+    public float minSize = 80f;     // Minimum font size
+    public float maxSize = 110f;    // Maximum font size
+    public float speed = 5f;        // Speed of the pulse wave
+
+    private TMP_Text textMesh;
+
+    private void Start()
+    {
+        // Automatically grab the TMP component from this GameObject
+        textMesh = GetComponent<TMP_Text>();
+    }
+
+    private void Update()
+    {
+        if (textMesh == null) return;
+
+        // Generate a value that oscillates smoothly between 0 and 1 using Sine
+        // Mathf.Sin returns -1 to 1; we shift and scale it to 0 to 1
+        float wave = (Mathf.Sin(Time.time * speed) + 1f) / 2f;
+
+        // Interpolate between min and max size based on the wave value
+        textMesh.fontSize = Mathf.Lerp(minSize, maxSize, wave);
+    }
+}
+===== END: PulsingText.cs =====
+
+
 ===== FILE: SnowmanController.cs =====
 using UnityEngine;
 using System.Collections;
 
-[RequireComponent(typeof(CharacterController))] // Erzwingt den Controller
+[RequireComponent(typeof(CharacterController))]
 public class SnowmanController : MonoBehaviour
 {
     [Header("Movement")]
-    public float moveSpeed = 3f;
+    public float moveSpeed = 3f; // Wird vom Spawner �berschrieben
     public float waitTime = 2f;
     public float rotateSpeed = 5f;
 
@@ -548,13 +676,9 @@ public class SnowmanController : MonoBehaviour
     public float maxX = 30f;
     public float minZ = -13f;
     public float maxZ = 9f;
-
-    // HIER: Damit nageln wir ihn auf dem Boden fest, genau wie den Player
     public float fixedY = 0f;
 
     [Header("Model Correction")]
-    // Wenn dein Modell liegt, drehen wir das Visual-Child oder das Objekt selbst.
-    // Falls das ganze Objekt gedreht werden muss:
     public float xRotationCorrection = -90f;
 
     private Vector3 targetPosition;
@@ -567,29 +691,27 @@ public class SnowmanController : MonoBehaviour
     void Start()
     {
         controller = GetComponent<CharacterController>();
-
-        // Sofortige Korrektur der Rotation beim Start
-        // Wir setzen die Rotation hart, damit er steht
+        // Rotation korrigieren
         transform.rotation = Quaternion.Euler(xRotationCorrection, 0f, 0f);
-
         StartCoroutine(RiseFromGround());
+    }
+
+    // Methode zum �ndern der Geschwindigkeit
+    public void SetSpeed(float newSpeed)
+    {
+        moveSpeed = newSpeed;
     }
 
     IEnumerator RiseFromGround()
     {
         isSpawning = true;
-
-        // Startposition (unter der Erde)
         Vector3 startPos = transform.position;
-        // Zielposition (auf dem Boden)
         Vector3 endPos = new Vector3(startPos.x, fixedY, startPos.z);
-
         float elapsed = 0f;
         float duration = 1.5f;
 
         while (elapsed < duration)
         {
-            // Wir bewegen nur die Position, Rotation bleibt fest korrigiert
             transform.position = Vector3.Lerp(startPos, endPos, elapsed / duration);
             elapsed += Time.deltaTime;
             yield return null;
@@ -605,8 +727,7 @@ public class SnowmanController : MonoBehaviour
         if (GameManager.Instance != null && !GameManager.Instance.IsGameRunning()) return;
         if (isSpawning) return;
 
-        // Wir erzwingen permanent die X-Rotation, falls die Physik sie verhaut
-        // Aber wir erlauben Y-Rotation (drehen zum Ziel)
+        // Rotations-Korrektur (X-Achse festnageln)
         float currentYRot = transform.rotation.eulerAngles.y;
         transform.rotation = Quaternion.Euler(xRotationCorrection, currentYRot, 0f);
 
@@ -627,26 +748,22 @@ public class SnowmanController : MonoBehaviour
 
     void MoveToTarget()
     {
-        // 1. Richtung berechnen (nur X und Z, Y ignorieren wir)
         Vector3 direction = (targetPosition - transform.position).normalized;
-        direction.y = 0; // Wichtig: Keine Bewegung nach oben/unten berechnen
+        direction.y = 0;
 
         if (direction != Vector3.zero)
         {
-            // 2. Rotation zum Ziel (aber unter Beibehaltung der -90 X-Rotation)
+            // Rotation berechnen
             Quaternion targetRot = Quaternion.LookRotation(direction);
-            // Wir kombinieren die Ziel-Y-Rotation mit deiner festen X-Korrektur
             Quaternion correctedTargetRot = Quaternion.Euler(xRotationCorrection, targetRot.eulerAngles.y, 0f);
-
             transform.rotation = Quaternion.Slerp(transform.rotation, correctedTargetRot, Time.deltaTime * rotateSpeed);
 
-            // 3. Bewegung mit CharacterController (wie beim Player)
+            // Bewegung
             Vector3 moveVector = direction * moveSpeed * Time.deltaTime;
             controller.Move(moveVector);
         }
 
-        // 4. Ziel erreicht Check
-        // Wir ignorieren hier auch die H�he beim Distanz-Check
+        // Ziel-Check (flach)
         Vector3 flatPos = new Vector3(transform.position.x, 0, transform.position.z);
         Vector3 flatTarget = new Vector3(targetPosition.x, 0, targetPosition.z);
 
@@ -656,9 +773,9 @@ public class SnowmanController : MonoBehaviour
             timer = waitTime;
         }
 
-        // 5. Hard Fix f�r Position (genau wie beim Player)
+        // Position auf Boden zwingen
         Vector3 clampedPos = transform.position;
-        clampedPos.y = fixedY; // Auf Boden zwingen
+        clampedPos.y = fixedY;
         transform.position = clampedPos;
     }
 
@@ -678,7 +795,7 @@ using System.Collections.Generic;
 
 public class SnowmanSpawner : MonoBehaviour
 {
-    public static SnowmanSpawner Instance; // Singleton f�r einfachen Zugriff
+    public static SnowmanSpawner Instance;
 
     public GameObject snowmanPrefab;
     public int maxSnowmen = 7;
@@ -689,17 +806,21 @@ public class SnowmanSpawner : MonoBehaviour
     public float minZ = -13f;
     public float maxZ = 9f;
 
+    [Header("Difficulty")]
+    public float initialSpeed = 3f; // Startgeschwindigkeit
+    private float currentGlobalSpeed;
+
     private List<GameObject> activeSnowmen = new List<GameObject>();
 
     void Awake()
     {
         Instance = this;
+        currentGlobalSpeed = initialSpeed;
     }
 
-    // Wird vom GameManager beim Start aufgerufen (manuell hinzuf�gen im GameManager StartGame w�re sauberer, aber so geht's automatisch)
     void Update()
     {
-        // Kleiner Hack: Wenn das Spiel startet und wir haben 0 Schneem�nner, spawn den ersten.
+        // Erster Schneemann spawnt automatisch beim Start, wenn Liste leer
         if (GameManager.Instance.IsGameRunning() && activeSnowmen.Count == 0)
         {
             SpawnSnowman();
@@ -712,22 +833,42 @@ public class SnowmanSpawner : MonoBehaviour
 
         float randomX = Random.Range(minX, maxX);
         float randomZ = Random.Range(minZ, maxZ);
-
-        // Startposition unter der Erde (Y = -2)
         Vector3 spawnPos = new Vector3(randomX, -2f, randomZ);
 
         GameObject newSnowman = Instantiate(snowmanPrefab, spawnPos, Quaternion.identity);
+
+        // Speed sofort setzen
+        SnowmanController sc = newSnowman.GetComponent<SnowmanController>();
+        if (sc != null) sc.SetSpeed(currentGlobalSpeed);
+
         activeSnowmen.Add(newSnowman);
     }
 
-    public void ResetSnowmen()
+    // Neue Funktion: Alle schneller machen
+    public void IncreaseGlobalSpeed(float amount)
+    {
+        currentGlobalSpeed += amount;
+
+        // Alle aktiven updaten
+        foreach (var snowman in activeSnowmen)
+        {
+            if (snowman != null)
+            {
+                SnowmanController sc = snowman.GetComponent<SnowmanController>();
+                if (sc != null) sc.SetSpeed(currentGlobalSpeed);
+            }
+        }
+    }
+
+    // Reset Funktion f�r neues Spiel
+    public void ResetSpawner()
     {
         foreach (var snowman in activeSnowmen)
         {
-            Destroy(snowman);
+            if (snowman != null) Destroy(snowman);
         }
         activeSnowmen.Clear();
-        // Der erste spawnt dann wieder automatisch im Update
+        currentGlobalSpeed = initialSpeed; // Speed zur�cksetzen!
     }
 }
 ===== END: SnowmanSpawner.cs =====
@@ -735,8 +876,8 @@ public class SnowmanSpawner : MonoBehaviour
 
 ===== FILE: TrainController.cs =====
 using UnityEngine;
-using UnityEngine.UI; // F�r Slider
-using TMPro;          // WICHTIG: F�r TextMeshPro
+using UnityEngine.UI;
+using TMPro;
 
 [RequireComponent(typeof(AudioSource))]
 public class TrainController : MonoBehaviour
@@ -747,9 +888,14 @@ public class TrainController : MonoBehaviour
     public float spawnX = 60f;
     public float stopX = 0f;
     public float despawnX = -80f;
-
-    // NEU: Festgelegte Anzahl (Standard 10)
     public int giftsNeededPerRound = 10;
+
+    [Header("Start Delay")]
+    // HIER GE�NDERT: Von 5.0f auf 7.0f erh�ht
+    public float initialStartDelay = 7.0f; // Nur in Runde 1
+
+    [Header("Collision")]
+    public Collider deliveryZoneCollider;
 
     [Header("Audio")]
     public AudioClip arrivalSound;
@@ -759,18 +905,20 @@ public class TrainController : MonoBehaviour
     public GameObject fullWagonVisual;
 
     [Header("UI (World Space)")]
-    public Slider timerSlider;   // Der existierende Timer-Slider (wenn du ihn behalten willst)
-
-    // NEU: Slider und Text f�r die Pakete
+    public Slider timerSlider;
     public Slider cargoSlider;
-    public TMP_Text cargoText;       // "0 / 10"
+    public TMP_Text cargoText;
 
+    // Zust�nde
     private bool isWaiting = false;
     private bool isLeaving = false;
+    private bool isInStartDelay = false;
+
     private float currentWaitTimer;
+    private float startDelayTimer;
+
     private int currentGifts = 0;
     private int requiredGifts;
-    private bool wasFullWhenDeparted = false;
     private AudioSource audioSource;
 
     void Start()
@@ -778,6 +926,10 @@ public class TrainController : MonoBehaviour
         audioSource = GetComponent<AudioSource>();
         audioSource.playOnAwake = false;
         audioSource.loop = false;
+
+        if (deliveryZoneCollider != null) deliveryZoneCollider.enabled = false;
+
+        // Reset mit "true" f�r erste Runde (Delay)
         ResetTrain(true);
     }
 
@@ -791,6 +943,18 @@ public class TrainController : MonoBehaviour
         else
         {
             audioSource.UnPause();
+        }
+
+        // Start Verz�gerung (nur Runde 1)
+        if (isInStartDelay)
+        {
+            startDelayTimer -= Time.deltaTime;
+            if (startDelayTimer <= 0)
+            {
+                isInStartDelay = false;
+                PlayArrivalSound();
+            }
+            return;
         }
 
         // 1. Einfahren
@@ -807,17 +971,9 @@ public class TrainController : MonoBehaviour
         // 2. Warten
         else if (isWaiting)
         {
-            // Visual Update wenn voll
-            if (currentGifts >= requiredGifts && !fullWagonVisual.activeSelf) SetWagonVisuals(true);
-
             currentWaitTimer -= Time.deltaTime;
-
-            // Timer Slider Logik (optional, falls du den noch nutzt)
             if (timerSlider) timerSlider.value = currentWaitTimer / waitTime;
 
-            // Abfahrtbedingungen: Zeit um ODER (Voll UND kurze Wartezeit vorbei)
-            // Wir lassen ihn sofort abfahren, wenn er voll ist? Oder soll er warten? 
-            // Dein Code war: Er f�hrt ab, wenn Zeit um.
             if (currentWaitTimer <= 0)
             {
                 Depart();
@@ -828,12 +984,10 @@ public class TrainController : MonoBehaviour
         {
             transform.Translate(Vector3.left * speed * Time.deltaTime);
 
+            // Wenn Zug weg ist -> Reset
             if (transform.position.x < despawnX)
             {
-                if (SnowmanSpawner.Instance != null) SnowmanSpawner.Instance.SpawnSnowman();
-
-                // Hier checken wir, ob er voll war f�r Punkte/Leben
-                GameManager.Instance.OnTrainDeparted(wasFullWhenDeparted);
+                // GameManager k�mmert sich um Schneem�nner und Runden, wir resetten nur den Zug
                 ResetTrain(false);
             }
         }
@@ -845,9 +999,9 @@ public class TrainController : MonoBehaviour
         currentWaitTimer = waitTime;
 
         currentGifts = 0;
-        // HIER: Feste Anzahl nehmen statt Random
         requiredGifts = giftsNeededPerRound;
 
+        if (deliveryZoneCollider != null) deliveryZoneCollider.enabled = true;
         UpdateUI();
     }
 
@@ -855,7 +1009,16 @@ public class TrainController : MonoBehaviour
     {
         isWaiting = false;
         isLeaving = true;
-        wasFullWhenDeparted = (currentGifts >= requiredGifts);
+
+        if (deliveryZoneCollider != null) deliveryZoneCollider.enabled = false;
+
+        // Abrechnung
+        bool isFull = (currentGifts >= requiredGifts);
+
+        if (GameManager.Instance != null)
+        {
+            GameManager.Instance.OnTrainDeparted(isFull);
+        }
     }
 
     void ResetTrain(bool initial)
@@ -863,17 +1026,36 @@ public class TrainController : MonoBehaviour
         transform.position = new Vector3(spawnX, transform.position.y, transform.position.z);
         isLeaving = false;
         isWaiting = false;
+
+        if (deliveryZoneCollider != null) deliveryZoneCollider.enabled = false;
         SetWagonVisuals(false);
 
+        if (initial)
+        {
+            // Runde 1: Delay
+            isInStartDelay = true;
+            startDelayTimer = initialStartDelay;
+
+            currentGifts = 0;
+            requiredGifts = giftsNeededPerRound;
+            UpdateUI();
+
+            // Spawner Reset
+            if (SnowmanSpawner.Instance != null) SnowmanSpawner.Instance.ResetSpawner();
+        }
+        else
+        {
+            // Folgerunden: Sofort Sound
+            PlayArrivalSound();
+        }
+    }
+
+    void PlayArrivalSound()
+    {
         if (arrivalSound != null)
         {
             audioSource.clip = arrivalSound;
             audioSource.Play();
-        }
-
-        if (initial && SnowmanSpawner.Instance != null)
-        {
-            SnowmanSpawner.Instance.ResetSnowmen();
         }
     }
 
@@ -885,41 +1067,33 @@ public class TrainController : MonoBehaviour
 
     void UpdateUI()
     {
-        // 1. Text aktualisieren ("5 / 10")
-        if (cargoText) cargoText.text = $"{currentGifts} / {requiredGifts}";
+        if (cargoText != null)
+            cargoText.text = $"{currentGifts} / {requiredGifts}";
 
-        // 2. Slider aktualisieren
-        if (cargoSlider)
+        if (cargoSlider != null)
         {
-            cargoSlider.maxValue = requiredGifts;
-            cargoSlider.value = currentGifts;
+            if (requiredGifts > 0)
+                cargoSlider.value = (float)currentGifts / (float)requiredGifts;
+            else
+                cargoSlider.value = 1f;
         }
     }
 
-    void OnTriggerEnter(Collider other)
+    public void AttemptDelivery(PlayerController player)
     {
-        // Nur wenn wir warten und der Spieler kommt
-        if (isWaiting && other.CompareTag("Player"))
+        if (isWaiting && player != null)
         {
-            PlayerController player = other.GetComponent<PlayerController>();
-            if (player != null)
+            int missing = requiredGifts - currentGifts;
+            if (missing > 0)
             {
-                // WICHTIG: Berechnen, wie viele noch fehlen
-                int missing = requiredGifts - currentGifts;
-
-                if (missing > 0)
+                int taken = player.GiveGifts(missing);
+                if (taken > 0)
                 {
-                    // Wir nehmen nur so viele vom Spieler, wie fehlen!
-                    int taken = player.GiveGifts(missing);
-
                     currentGifts += taken;
                     UpdateUI();
-
                     if (currentGifts >= requiredGifts)
                     {
                         SetWagonVisuals(true);
-                        // Optional: Wenn voll, sofort Abfahrt-Timer verk�rzen?
-                        // currentWaitTimer = 1.0f; // z.B. nur noch 1 Sekunde warten
                     }
                 }
             }

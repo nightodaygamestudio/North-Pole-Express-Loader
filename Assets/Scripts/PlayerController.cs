@@ -1,13 +1,11 @@
 using UnityEngine;
 using System.Collections.Generic;
 using UnityEngine.InputSystem;
-using UnityEngine.UI;
 using TMPro;
 
 [RequireComponent(typeof(CharacterController))]
 public class PlayerController : MonoBehaviour
 {
-    // ... (Andere Variablen wie bisher lassen) ...
     [Header("Movement & Speed")]
     public float baseMoveSpeed = 10f;
     public float rotateSpeed = 10f;
@@ -20,10 +18,13 @@ public class PlayerController : MonoBehaviour
     public float maxZ = 9f;
     public float fixedY = 0f;
 
-    [Header("Animation")]
+    [Header("Animation Settings")]
     public Animator animator;
     public bool useAnimation = true;
-    public string moveParameterName = "IsMoving";
+
+    // HIER GEÄNDERT: Statt Parameter, gibst du hier die Namen der States an
+    public string idleStateName = "Idle"; // Name des orangenen Kastens im Animator für Stehen
+    public string walkStateName = "Run";  // Name des orangenen Kastens im Animator für Laufen
 
     [Header("Stack Settings")]
     public Transform stackPoint;
@@ -35,6 +36,9 @@ public class PlayerController : MonoBehaviour
     private List<GameObject> currentStack = new List<GameObject>();
     private float currentSpeed;
 
+    // Damit wir die Animation nicht jeden Frame neu starten
+    private bool wasMoving = false;
+
     void Start()
     {
         controller = GetComponent<CharacterController>();
@@ -44,21 +48,20 @@ public class PlayerController : MonoBehaviour
 
     void Update()
     {
+        // Wenn Spiel nicht läuft -> Idle erzwingen
         if (GameManager.Instance != null && !GameManager.Instance.IsGameRunning())
         {
-            if (useAnimation && animator != null) animator.SetBool(moveParameterName, false);
+            if (useAnimation && animator != null)
+            {
+                animator.Play(idleStateName);
+            }
             return;
         }
         Move();
     }
 
-    // ... (Move, OnTriggerEnter, CollectGift, DropAllGifts bleiben GLEICH wie vorher) ...
-    // ... (Kopiere hier deine Move, OnTriggerEnter, CollectGift, DropAllGifts Methoden rein) ...
-    // Ich kürze das hier ab, damit du nur das Neue siehst:
-
     void Move()
     {
-        // (Dein bestehender Move-Code)
         float x = 0f;
         float z = 0f;
         if (Keyboard.current != null)
@@ -71,7 +74,23 @@ public class PlayerController : MonoBehaviour
         Vector3 direction = new Vector3(x, 0, z).normalized;
         bool isMoving = direction.magnitude >= 0.1f;
 
-        if (useAnimation && animator != null) animator.SetBool(moveParameterName, isMoving);
+        // --- HIER NEU: Animation direkt abspielen ---
+        if (useAnimation && animator != null)
+        {
+            // Wir prüfen, ob sich der Zustand geändert hat, damit die Animation nicht stottert
+            if (isMoving != wasMoving)
+            {
+                if (isMoving)
+                {
+                    animator.Play(walkStateName);
+                }
+                else
+                {
+                    animator.Play(idleStateName);
+                }
+                wasMoving = isMoving;
+            }
+        }
 
         if (isMoving)
         {
@@ -88,23 +107,15 @@ public class PlayerController : MonoBehaviour
         transform.position = finalPos;
     }
 
-    // Diese Methode prüft die Kollision
     void OnTriggerEnter(Collider other)
     {
         if (other.CompareTag("Gift"))
         {
             if (currentStack.Count < maxStackSize) CollectGift(other.gameObject);
         }
-        // WICHTIG: Hast du dem Schneemann den Tag "Snowman" gegeben?
         else if (other.CompareTag("Snowman"))
         {
             DropAllGifts();
-        }
-        // Falls du auch eine Ablade-Zone hast (wie vorhin besprochen)
-        else if (other.CompareTag("TrainZone"))
-        {
-            // Hier würde die Logik für GiveGifts rein, falls du sie nicht im TrainController hast
-            // Aber wir haben das ja im TrainController gelöst, also passt das so.
         }
     }
 
@@ -112,6 +123,10 @@ public class PlayerController : MonoBehaviour
     {
         Collider col = groundGift.GetComponent<Collider>();
         if (col != null) col.enabled = false;
+
+        Renderer[] renderers = groundGift.GetComponentsInChildren<Renderer>();
+        foreach (var rend in renderers) rend.enabled = true;
+
         GiftDespawner despawner = groundGift.GetComponent<GiftDespawner>();
         if (despawner != null) Destroy(despawner);
 
@@ -123,29 +138,25 @@ public class PlayerController : MonoBehaviour
         UpdateSpeedAndUI();
     }
 
-    // Diese Methode verteilt die Geschenke im Kreis (hast du schon, nur zur Sicherheit)
     void DropAllGifts()
     {
         if (currentStack.Count == 0) return;
-
         foreach (var gift in currentStack)
         {
             gift.transform.SetParent(null);
-
-            // ZUFALLS-KREIS LOGIK:
-            Vector2 randomCircle = Random.insideUnitCircle * 3f; // Radius 3
+            Vector2 randomCircle = Random.insideUnitCircle * 3f;
             Vector3 dropPos = transform.position + new Vector3(randomCircle.x, 0.5f, randomCircle.y);
-
-            // Begrenzung, damit sie nicht aus der Map fliegen
             dropPos.x = Mathf.Clamp(dropPos.x, minX, maxX);
             dropPos.z = Mathf.Clamp(dropPos.z, minZ, maxZ);
 
             gift.transform.position = dropPos;
             gift.transform.rotation = Quaternion.identity;
 
-            // Collider wieder anmachen und Despawner hinzufügen
             Collider col = gift.GetComponent<Collider>();
             if (col != null) col.enabled = true;
+
+            Renderer[] renderers = gift.GetComponentsInChildren<Renderer>();
+            foreach (var r in renderers) r.enabled = true;
 
             if (gift.GetComponent<GiftDespawner>() == null)
                 gift.AddComponent<GiftDespawner>();
@@ -170,28 +181,17 @@ public class PlayerController : MonoBehaviour
         }
     }
 
-    // --- HIER IST DIE NEUE FUNKTION ---
-    // Gibt maximal 'neededAmount' zurück und behält den Rest
     public int GiveGifts(int neededAmount)
     {
-        // Wir können maximal so viele geben, wie wir haben
         int amountToGive = Mathf.Min(currentStack.Count, neededAmount);
-
-        // Wir entfernen die obersten Geschenke (vom Ende der Liste)
         for (int i = 0; i < amountToGive; i++)
         {
-            // Immer das letzte Element nehmen
             int lastIndex = currentStack.Count - 1;
             GameObject gift = currentStack[lastIndex];
-
-            // Aus Liste entfernen
             currentStack.RemoveAt(lastIndex);
-
-            // Objekt zerstören (es ist ja jetzt im Zug)
             Destroy(gift);
         }
-
-        UpdateSpeedAndUI(); // Speed wieder erhöhen!
+        UpdateSpeedAndUI();
         return amountToGive;
     }
 }
