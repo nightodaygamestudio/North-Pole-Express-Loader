@@ -382,7 +382,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::PlayerController
   baseMoveSpeed: 10
   rotateSpeed: 10
-  speedDisplayUI: {fileID: 2142508347}
+  speedDisplayUI: {fileID: 1290774920}
   minX: -30
   maxX: 30
   minZ: -13
@@ -1866,6 +1866,7 @@ MonoBehaviour:
   livesText: {fileID: 0}
   finalScoreText: {fileID: 0}
   maxLives: 3
+  splashDuration: 3
 --- !u!4 &844250083
 Transform:
   m_ObjectHideFlags: 0
